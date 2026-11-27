@@ -1,0 +1,72 @@
+name: DevSecOps Shift-Left Policy Validation
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'manifests/**'
+      - 'policies/**'
+      - '.github/workflows/shift-left-validation.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'manifests/**'
+      - 'policies/**'
+  workflow_dispatch:
+
+jobs:
+  kyverno-cli-check:
+    name: Walidacja Kyverno CLI (YAML)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pobranie repozytorium
+        uses: actions/checkout@v4
+
+      - name: Instalacja Kyverno CLI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          KYVERNO_VERSION=$(curl -sH "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/kyverno/kyverno/releases/latest | jq -r .tag_name)
+          echo "Instalowanie Kyverno CLI w wersji: ${KYVERNO_VERSION}"
+          curl -sLO "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
+          tar -xzf "kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
+          sudo mv kyverno /usr/local/bin/
+          kyverno version
+
+      - name: Walidacja manifestów za pomocą Kyverno CLI
+        run: |
+          START=$(date +%s%3N)
+          kyverno apply policies/kyverno/ --resource manifests/ --detailed-results
+          EXIT_CODE=$?
+          END=$(date +%s%3N)
+          echo "Czas walidacji Kyverno CLI: $((END - START)) ms"
+          exit $EXIT_CODE
+
+  conftest-opa-check:
+    name: Walidacja Conftest / OPA (Rego)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pobranie repozytorium
+        uses: actions/checkout@v4
+
+      - name: Instalacja Conftest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CONFTEST_VERSION=$(curl -sH "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/open-policy-agent/conftest/releases/latest | jq -r .tag_name | sed 's/^v//')
+          echo "Instalowanie Conftest w wersji: ${CONFTEST_VERSION}"
+          curl -sLO "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          tar -xzf "conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          sudo mv conftest /usr/local/bin/
+          conftest --version
+
+      - name: Walidacja manifestów za pomocą Conftest
+        run: |
+          START=$(date +%s%3N)
+          conftest test manifests/ -p policies/conftest/ --output stdout
+          EXIT_CODE=$?
+          END=$(date +%s%3N)
+          echo "Czas walidacji Conftest (OPA): $((END - START)) ms"
+          exit $EXIT_CODE
